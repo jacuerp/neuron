@@ -1,0 +1,3 @@
+layers=2 
+type=input weight=1.0, type=input weight=1.0
+type=lif tau_ref=4.0 theta=1.0

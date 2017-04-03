@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import pylab as pb
 
@@ -18,12 +19,13 @@ class Neuron(object):
 			
 	"""
 
-	def __init__(self,name="McCulloch-Pitts",theta=1.0,inputs=None,weight=1.0,post_synaptic_neuron=None):
+	def __init__(self,name="McCulloch-Pitts",theta=1.0,inputs=None,weight=1.0,post_synaptic_neuron=None,pre_synaptic_neuron=None):
 		self.type = name
 		self.theta = theta
 		if inputs is None: self.inputs = []
 		self.weight = weight
 		self.post_synapse = post_synaptic_neuron
+		if pre_synaptic_neuron is None: self.pre_synapse = []
 
 	def output(self):
 		if sum(self.inputs) >= self.theta:
@@ -35,6 +37,7 @@ class Neuron(object):
 		if self.post_synapse is not None:
 			print "replacing old postsynaptic neuron with", post
 		self.post_synapse = post
+		post.pre_synapse.append(self)
 		
 
 class Layer(object):
@@ -47,33 +50,58 @@ class Layer(object):
 		if neurons is None: self.neurons = []
 		else: self.nNeurons = len(neurons)
 
-	def addInput(self,weight):
-		newInput = Input(weight)
-		self.neurons.append(newInput)
-		self.network.neurons.append(newInput)
-		self.network.nNeurons+=1
-		return newInput
+	# def addInput(self,weight):
+	# 	newInput = Input(weight)
+	# 	self.neurons.append(newInput)
+	# 	self.network.neurons.append(newInput)
+	# 	self.network.nNeurons+=1
+	# 	return newInput
 
-	def addNeuron(self):
-		newNeuron = Neuron()
+	# def addNeuron(self):
+	# 	newNeuron = Neuron()
+	# 	self.neurons.append(newNeuron)
+	# 	self.network.neurons.append(newNeuron)
+	# 	self.network.nNeurons+=1
+	# 	return newNeuron
+
+	# def addIF(self):
+	# 	newNeuron = IF()
+	# 	self.neurons.append(newNeuron)
+	# 	self.network.neurons.append(newNeuron)
+	# 	self.network.nNeurons+=1
+	# 	return newNeuron
+
+	# def addLIF(self):
+	# 	newNeuron = LIF()
+	# 	self.neurons.append(newNeuron)
+	# 	self.network.neurons.append(newNeuron)
+	# 	self.network.nNeurons+=1
+	# 	return newNeuron
+
+	def addNeuron(self,neuron_type,args):
+		if neuron_type.lower()=="input": 
+			newNeuron = Input(**args) 
+		elif neuron_type.lower()=="mcculloch-pitts": 
+			newNeuron = Neuron(**args) 
+		elif neuron_type.lower()=="if":
+			newNeuron = IF(**args) 
+		elif neuron_type.lower()=="lif":
+			newNeuron = LIF(**args) 
+		else: 
+			print "Invalid argument:", neuron_type.lower() 
+			return None
 		self.neurons.append(newNeuron)
 		self.network.neurons.append(newNeuron)
 		self.network.nNeurons+=1
 		return newNeuron
 
-	def addIF(self):
-		newNeuron = IF()
-		self.neurons.append(newNeuron)
-		self.network.neurons.append(newNeuron)
-		self.network.nNeurons+=1
-		return newNeuron
-
-	def addLIF(self):
-		newNeuron = LIF()
-		self.neurons.append(newNeuron)
-		self.network.neurons.append(newNeuron)
-		self.network.nNeurons+=1
-		return newNeuron
+	def removeNeuron(self, neuron):
+		if neuron.post_synapse is not None: neuron.post_synapse.pre_synapse.remove(neuron)
+		if neuron.pre_synapse is not None:
+			for i in neuron.pre_synapse:
+				i.post_synapse=None
+		self.neurons.remove(neuron)
+		self.nNeurons -= 1
 
 
 class Network(object):
@@ -85,17 +113,18 @@ class Network(object):
 		self.neurons = []
 		self.nNeurons = 0
 		self.output = None
+		self.time = []
 
-	def _initialize(self,steps):
+	def _initialize(self):
 		"""Initializes integrating neuron membrane potential"""
-		self.output=np.zeros(len(steps))
+		self.output=np.zeros(len(self.time))
 		for i in self.neurons:
 			if i.type=="IF" or i.type=="LIF":
-				i.V_m=np.zeros(len(steps))
+				i.V_m=np.zeros(len(self.time))
 				i.t_ref=0
 
-	def _spikePlot(self, title, time):
-		pb.plot(time, self.output)
+	def spikePlot(self, title):
+		pb.plot(self.time, self.output)
 		pb.title(title)
 		pb.ylabel('Membrane Potential (V)')
 		pb.xlabel('Time (msec)')
@@ -104,14 +133,25 @@ class Network(object):
 
 	def reset(self):
 		for j in self.neurons:
-			if j.type=="IF":
-				j.membrane_voltage=0
+			if j.type in ["IF","LIF"]:
+				j.V_m=[]
 
 	def addLayer(self):
 		newLayer = Layer(self,self.nLayers)
 		self.layers.append(newLayer)
 		self.nLayers+=1
 		return newLayer
+
+	def removeLayer(self,layer):
+		for i in layer.neurons:
+			layer.removeNeuron(i)
+			self.nNeurons -= 1
+			self.neurons.remove(i)
+		l_index = self.layers.index(layer)
+		for i in range(l_index,len(self.layers)):
+			self.layers[i].level -= 1
+		self.layers.remove(layer)
+		self.nLayers -= 1
 
 	def output(self):
 		"""Still needs work. Should output an output value for a single step"""
@@ -134,10 +174,10 @@ class Network(object):
 		"""
 		Returns output array for this network over T with time step dt
 		"""
-		time = np.arange(0,T+dt,dt)
-		self._initialize(time)
+		self.time = np.arange(0,T+dt,dt)
+		self._initialize()
 		_printHeader()
-		for i,t in enumerate(time):
+		for i,t in enumerate(self.time):
 			for j in xrange(self.nLayers):
 				layer = self.layers[j]
 				for k in xrange(len(layer.neurons)):
@@ -152,30 +192,30 @@ class Network(object):
 						post = pre.post_synapse
 						post.inputs.append(output_pre)
 					pre.inputs = []
-		self._spikePlot("Network Output",time)
+		self.spikePlot("Network Output")
 
 
 class Input(Neuron):
 	"""
 	"""
-	def __init__(self,w,name="input",inputs=None):
-		Neuron.__init__(self,name=name,theta=0.0,inputs=inputs,weight=w,post_synaptic_neuron=None)
+	def __init__(self,weight,name="input",inputs=None):
+		Neuron.__init__(self,name=name,theta=0.0,inputs=inputs,weight=weight,post_synaptic_neuron=None,pre_synaptic_neuron=None)
 		if inputs is None: self.inputs = []
 
 
 class IF(Neuron):
 	"""
 	"""
-	def __init__(self,name="IF",V_m=None,C=1.0,tau_ref=0.0,theta=1.0,V_d=1.0,inputs=None,weight=1.0):
-		Neuron.__init__(self,name=name,theta=theta,inputs=inputs,weight=weight,post_synaptic_neuron=None)
+	def __init__(self,name="IF",V_m=None,C=1.0,theta=1.0,V_d=1.0,inputs=None,weight=1.0):
+		Neuron.__init__(self,name=name,theta=theta,inputs=inputs,weight=weight,post_synaptic_neuron=None,pre_synaptic_neuron=None)
 		if inputs is None: self.inputs = []
 		self.V_m=V_m
 		self.C=C
-		self.tau_ref=tau_ref
 		self.V_d=V_d
+		self.time = []
 
 	def _printState(self,i):
-		print i, "|", self.inputs, "\t",self.V_m[i], "\t", self.theta
+		print i, self.inputs, "\t",self.V_m[i], "\t", self.theta
 
 	# def output(self):
 	# 	self.membrane_voltage += sum(self.inputs)
@@ -189,10 +229,10 @@ class IF(Neuron):
 		self.V_m[s] = self.V_m[s-1] + self.I / self.C * dt
 		if self.V_m[s] >= self.theta:
 			self.V_m[s] += self.V_d
-			self.t_ref = t + self.tau_ref
+			self.t_ref = t
 
-	def _spikePlot(self,title,time):
-		pb.plot(time, self.V_m)
+	def spikePlot(self,title):
+		pb.plot(self.time, self.V_m)
 		pb.title(title)
 		pb.ylabel('Membrane Potential (V)')
 		pb.xlabel('Time (msec)')
@@ -216,16 +256,14 @@ class IF(Neuron):
 		if self.inputs is None: return "No input to neuron"
 		self.I=sum(self.inputs)
 		self.t_ref=0
-		time = np.arange(0,T+dt,dt)
-		self.V_m=np.zeros(len(time))
+		self.time = np.arange(0,T+dt,dt)
+		self.V_m=np.zeros(len(self.time))
 		_printHeader()
-		for i,t in enumerate(time):
+		for i,t in enumerate(self.time):
 			if t > self.t_ref:
 				self._updateMembrane(i,t,dt)
-			# self._printState(i)
-		print "before"
-		self._spikePlot("LIF Output",time)
-		print "after"
+			self._printState(i)
+		self.spikePlot("LIF Output")
 		return self.V_m
 
 class LIF(IF):
@@ -247,10 +285,12 @@ class LIF(IF):
 	I: input A
 	"""
 	def __init__(self,name="LIF",V_m=None,R=1.0,C=10.0,tau_ref=0.0,theta=1.0,V_d=1.0,inputs=None):
-		IF.__init__(self,name=name,V_m=V_m,C=C,tau_ref=tau_ref,theta=theta,V_d=V_d,inputs=inputs)
+		IF.__init__(self,name=name,V_m=V_m,C=C,theta=theta,V_d=V_d,inputs=inputs)
 		if inputs is None: self.inputs = []
 		self.R=R
 		self.tau=R*C
+		self.tau_ref=tau_ref
+		self.time = []
 
 	def _updateMembrane(self,s,t,dt):
 		self.V_m[s] = self.V_m[s-1] + (-self.V_m[s-1] + self.I*self.R) / self.tau * dt
@@ -267,7 +307,44 @@ def _printHeader():
 	print "|step|input      |membrane     |threshold    |"
 	print "|____|___________|_____________|_____________|"
 
+def _makeLayers(n, net):
+	for i in range(n):
+		net.addLayer()
 
+def main():
+	inputs = open("input.txt","r")
+	adj = open("adjacency.txt","r")
+	out = open("output.txt","w")
+	lines = inputs.readlines()
+	if "layers" not in lines[0]: print "bad input: number of layers not specified"
+	for row,line in enumerate(lines):
+		if 'layers' in line:
+			net = Network()
+			nLayers=int((line.split('='))[1])
+			_makeLayers(nLayers,net)
+		else:
+			layer=net.layers[row-1]
+			neurons=line.split(',')
+			for neuron in neurons:
+				params=neuron.strip().split(' ')
+				f = layer.addNeuron
+				neuron_type = (params[0].split('='))[1]
+				kw={}
+				for param in params[1:]:
+					pair=param.split("=")
+					kw[pair[0]]=float(pair[1])
+				f(neuron_type,kw)
+	lines = adj.readlines()
+	for row,line in enumerate(lines):
+		line = line.strip()
+		for i,b in enumerate(line):
+			if b=="1":
+				net.neurons[row].connectTo(net.neurons[i])
+	net.run(50,.125)
+
+
+if __name__=="__main__":
+	main()
 
 # AND = Network()
 # l0 = AND.addLayer()
@@ -280,30 +357,18 @@ def _printHeader():
 # i0.connectTo(n0)
 # i1.connectTo(n0)
 
-net = Network()
-l0 = net.addLayer()
-l1 = net.addLayer()
-i0 = l0.addInput(1)
-i1 = l0.addInput(1)
-n0 = l1.addLIF()
-n0.tau_ref=4.0
-n0.theta=1.0
-i0.connectTo(n0)
-i1.connectTo(n0)
-net.run(50,.125)
+# net = Network()
+# l0 = net.addLayer()
+# l1 = net.addLayer()
+# i0 = l0.addInput(1)
+# i1 = l0.addInput(1)
+# n0 = l1.addLIF()
+# n0.tau_ref=4.0
+# n0.theta=1.0
+# i0.connectTo(n0)
+# i1.connectTo(n0)
+# net.run(50,.125)
 
-lif = LIF(tau_ref=4.0,theta=1.0)
-lif.inputs=[1.0,1.0]
-lif.run(50,.5)
-
-# fig = Figure()
-# canvas = FigureCanvas(fig)
-# ax1 = fig.add_subplot()
-# ax2 = fig.add_subplot()
-# ax1.plot()
-# ax2.plot()
-# ax1.set_title('Network Output')
-# ax1.grid(True)
-# ax1.set_xlabel('time')
-# ax1.set_ylabel('volts')
-# canvas.print_figure('test')
+# lif = LIF(tau_ref=4.0,theta=1.0)
+# lif.inputs=[1.0,1.0]
+# lif.run(50,.5)
